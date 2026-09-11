@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect } from "react";
 import { auth, db } from "@/lib/firebase";
 import { 
@@ -107,6 +108,14 @@ export default function WorkspacePage() {
     return (
       <div className="flex min-h-screen items-center justify-center p-4 bg-[#F4F6FA]">
         <div className="w-full max-w-md rounded-xl border border-[#DFE4EC] bg-white p-8 shadow-sm">
+          <Image
+            src="/union-logo.png"
+            alt="한국비정규교수노동조합 로고"
+            width={200}
+            height={144}
+            className="mb-4 h-auto"
+            priority
+          />
           <div className="flex items-center gap-2 mb-2">
             <span className="w-1 h-6 bg-[#BF3329] rounded-sm"></span>
             <h1 className="text-lg font-bold text-[#111823]">한국비정규교수노동조합 강원대분회</h1>
@@ -166,9 +175,6 @@ export default function WorkspacePage() {
       {/* 최상단 상태 밴드 */}
       <div className="sticky top-0 z-50 flex items-center justify-between px-4 py-2 bg-[#111823] text-white text-xs">
         <div className="flex items-center gap-2">
-          <span className="bg-[#BF3329] text-white px-2 py-0.5 rounded-full font-bold text-[10px]">
-            시범판
-          </span>
           <span>
             <b>{currentUser.name}</b> ({currentUser.role}) · {currentUser.perm === "owner" ? "최고관리자" : "집행위원"}
           </span>
@@ -185,7 +191,13 @@ export default function WorkspacePage() {
       <div className="flex-1 grid grid-cols-1 md:grid-cols-[240px_1fr]">
         <aside className="border-r border-[#DFE4EC] bg-white p-4 flex flex-col gap-6">
           <div className="flex items-center gap-2">
-            <span className="w-1 h-5 bg-[#BF3329] rounded-sm"></span>
+            <Image
+              src="/union-emblem.png"
+              alt="한국비정규교수노동조합 엠블럼"
+              width={40}
+              height={40}
+              className="h-8 w-8 object-contain"
+            />
             <span className="font-bold text-sm text-[#111823]">강원대분회 업무 공간</span>
           </div>
           <nav className="flex flex-col gap-1 text-sm">
