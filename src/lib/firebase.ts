@@ -13,7 +13,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 console.log("🔥 현재 연결된 Project ID:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
 export const auth = getAuth(app);

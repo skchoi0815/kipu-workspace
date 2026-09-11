@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "predev": "node scripts/gen-fcm-sw.mjs",
+    "prebuild": "node scripts/gen-fcm-sw.mjs"
   },
   "dependencies": {
     "browser-image-compression": "^2.0.2",
