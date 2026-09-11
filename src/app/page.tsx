@@ -9,12 +9,14 @@ import {
   onAuthStateChanged 
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { normalizeEmail, resolveProfile } from "@/lib/profiles";
 import CalendarView from "@/components/CalendarView";
 import BoardView from "@/components/BoardView";
 import LibraryView from "@/components/LibraryView";
 import EventsView from "@/components/EventsView";
 import RosterTable from "@/components/RosterTable";
 import ChatBox from "@/components/ChatBox";
+import { requestFcmPermission, type FcmStatus, type ForegroundPush } from "@/hooks/useFcm";
 
 interface UserProfile {
   id: string;
@@ -22,7 +24,7 @@ interface UserProfile {
   email: string;
   role: string;
   perm: "owner" | "member";
-  status: "active" | "blocked";
+  status: "active" | "blocked" | "pending";
   phone: string;
 }
 
@@ -33,49 +35,52 @@ export default function WorkspacePage() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("home");
+  const [profileError, setProfileError] = useState("");
+  const [fcmStatus, setFcmStatus] = useState<FcmStatus>("idle");
+  const [fcmMsg, setFcmMsg] = useState<ForegroundPush | null>(null);
 
-  // Firebase 인증 상태 감시 및 프로필 자동 동기화
+  const handleFcm = async () => {
+    const { status } = await requestFcmPermission(setFcmMsg);
+    setFcmStatus(status);
+  };
+
+  // Firebase 인증 상태 감시 및 프로필 동기화
+  // - 알려진 집행위원 이메일이면 매핑 기준으로 생성/교정한다
+  // - 모르는 계정은 승인대기로 만들고, 조회 실패 시 오류 화면을 보여준다
+  // - 어떤 경우에도 가짜 owner 프로필을 씌우지 않는다
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        try {
-          const ref = doc(db, "users", fbUser.uid);
-          const snap = await getDoc(ref);
-
-          if (snap.exists()) {
-            const uData = snap.data() as UserProfile;
-            setCurrentUser({ ...uData, id: fbUser.uid });
-          } else {
-            // 새로 생성된 DB라 프로필 문서가 없는 경우, 분회장/최고관리자 기본 프로필을 자동 생성하여 저장
-            const initialProfile: UserProfile = {
-              id: fbUser.uid,
-              name: "최승기",
-              email: fbUser.email || "",
-              role: "분회장",
-              perm: "owner",
-              status: "active",
-              phone: "",
-            };
-
-            await setDoc(ref, initialProfile);
-            setCurrentUser(initialProfile);
-          }
-        } catch (error) {
-          console.warn("프로필 조회 건너뜀 (기본 계정 정보 적용):", error);
-          setCurrentUser({
-            id: fbUser.uid,
-            name: "최승기",
-            email: fbUser.email || "",
-            role: "분회장",
-            perm: "owner",
-            status: "active",
-            phone: "",
-          });
-        }
-      } else {
+      if (!fbUser) {
         setCurrentUser(null);
+        setProfileError("");
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+      try {
+        setProfileError("");
+        const ref = doc(db, "users", fbUser.uid);
+        const snap = await getDoc(ref);
+        const { action, profile } = resolveProfile(
+          normalizeEmail(fbUser.email),
+          snap.exists(),
+          snap.exists() ? (snap.data() as UserProfile) : null
+        );
+        if (action === "use-existing") {
+          setCurrentUser({ ...profile, id: fbUser.uid });
+        } else if (action === "heal") {
+          await setDoc(ref, profile, { merge: true });
+          setCurrentUser({ ...profile, id: fbUser.uid });
+        } else {
+          await setDoc(ref, profile);
+          setCurrentUser({ ...profile, id: fbUser.uid });
+        }
+      } catch (error) {
+        console.error("프로필 조회 실패:", error);
+        setCurrentUser(null);
+        setProfileError("프로필을 불러오지 못했습니다. 네트워크 또는 권한 설정을 확인해 주세요.");
+      } finally {
+        setLoading(false);
+      }
     });
     return () => unsub();
   }, []);
@@ -99,6 +104,32 @@ export default function WorkspacePage() {
     return (
       <div className="flex h-screen items-center justify-center bg-[#F4F6FA] text-[#6C7787] text-sm">
         시스템 연결 중…
+      </div>
+    );
+  }
+
+  // 1-1. 프로필 조회 실패 화면 (가짜 프로필을 씌우지 않는다)
+  if (profileError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4 bg-[#F4F6FA]">
+        <div className="w-full max-w-md rounded-xl border border-[#DFE4EC] bg-white p-8 shadow-sm text-center">
+          <p className="text-sm font-bold text-[#111823] mb-2">접속 오류</p>
+          <p className="text-xs text-[#6C7787] mb-6">{profileError}</p>
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-[#BF3329] text-white font-semibold rounded text-sm hover:bg-[#96271F] transition"
+            >
+              다시 시도
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 border border-[#C6CEDA] text-[#3B4653] font-semibold rounded text-sm hover:bg-[#F4F6FA] transition"
+            >
+              로그아웃
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -158,6 +189,30 @@ export default function WorkspacePage() {
               로그인
             </button>
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 1-2. 승인대기/차단 화면 (메인 UI 진입 차단)
+  if (currentUser.status !== "active") {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4 bg-[#F4F6FA]">
+        <div className="w-full max-w-md rounded-xl border border-[#DFE4EC] bg-white p-8 shadow-sm text-center">
+          <p className="text-sm font-bold text-[#111823] mb-2">
+            {currentUser.status === "pending" ? "승인 대기 중입니다" : "이용이 제한된 계정입니다"}
+          </p>
+          <p className="text-xs text-[#6C7787] mb-6">
+            {currentUser.status === "pending"
+              ? `등록되지 않은 계정(${currentUser.email})입니다. 분회장에게 승인을 요청해 주세요.`
+              : "관리자에게 문의해 주세요."}
+          </p>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 border border-[#C6CEDA] text-[#3B4653] font-semibold rounded text-sm hover:bg-[#F4F6FA] transition"
+          >
+            로그아웃
+          </button>
         </div>
       </div>
     );
@@ -265,8 +320,36 @@ export default function WorkspacePage() {
           )}
 
           {activeTab === "admin" && (
-            <div className="bg-white border border-[#DFE4EC] rounded-lg p-6 shadow-sm">
-              <p className="text-sm text-[#6C7787]">관리자 전용 설정 영역입니다.</p>
+            <div className="flex flex-col gap-4">
+              <div className="bg-white border border-[#DFE4EC] rounded-lg p-6 shadow-sm">
+                <p className="text-sm text-[#6C7787]">관리자 전용 설정 영역입니다.</p>
+              </div>
+              <div className="bg-white border border-[#DFE4EC] rounded-lg p-6 shadow-sm">
+                <p className="text-sm font-bold text-[#111823] mb-1">푸시 알림</p>
+                <p className="text-xs text-[#6C7787] mb-4">
+                  {fcmStatus === "granted" && "알림 허용됨 · 토큰 저장 완료"}
+                  {fcmStatus === "idle" && "아직 허용하지 않았습니다."}
+                  {fcmStatus === "unsupported" && "이 브라우저는 푸시를 지원하지 않습니다."}
+                  {fcmStatus === "denied" && "알림이 차단됨 — 브라우저/OS 설정에서 허용해 주세요."}
+                  {fcmStatus === "no-vapid-key" && "VAPID 키 미설정 — 관리자에게 문의하세요."}
+                  {fcmStatus === "error" && "토큰 발급 실패 — 다시 시도해 주세요."}
+                </p>
+                <button
+                  onClick={handleFcm}
+                  className="px-4 py-2 bg-[#BF3329] text-white font-semibold rounded text-sm hover:bg-[#96271F] transition"
+                >
+                  알림 허용하기
+                </button>
+                <p className="text-xs text-[#6C7787] mt-3">
+                  아이폰은 홈 화면에 추가한 앱에서 눌러야 합니다. (iOS 16.4 이상)
+                </p>
+                {fcmMsg && (
+                  <div className="mt-4 p-3 rounded bg-[#EDF0F6] border border-[#DFE4EC]">
+                    <p className="text-sm font-bold text-[#111823]">{fcmMsg.title}</p>
+                    <p className="text-xs text-[#3B4653] mt-1">{fcmMsg.body}</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </main>
