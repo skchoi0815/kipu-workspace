@@ -38,10 +38,42 @@ export default function WorkspacePage() {
   const [profileError, setProfileError] = useState("");
   const [fcmStatus, setFcmStatus] = useState<FcmStatus>("idle");
   const [fcmMsg, setFcmMsg] = useState<ForegroundPush | null>(null);
+  const [pushTitle, setPushTitle] = useState("");
+  const [pushBody, setPushBody] = useState("");
+  const [sendResult, setSendResult] = useState("");
 
   const handleFcm = async () => {
     const { status } = await requestFcmPermission(setFcmMsg);
     setFcmStatus(status);
+  };
+
+  const handleSendPush = async () => {
+    setSendResult("");
+    if (!pushTitle.trim() || !pushBody.trim()) {
+      setSendResult("제목과 내용을 입력해 주세요.");
+      return;
+    }
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch("/api/push/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ title: pushTitle.trim(), body: pushBody.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSendResult(`${data.sent}대에 발송했습니다.`);
+        setPushTitle("");
+        setPushBody("");
+      } else {
+        setSendResult(`발송 실패: ${data.error}`);
+      }
+    } catch {
+      setSendResult("발송 중 오류가 발생했습니다.");
+    }
   };
 
   // Firebase 인증 상태 감시 및 프로필 동기화
@@ -350,6 +382,36 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
+              {currentUser.perm === "owner" && (
+                <div className="bg-white border border-[#DFE4EC] rounded-lg p-6 shadow-sm">
+                  <p className="text-sm font-bold text-[#111823] mb-1">전체 공지 발송</p>
+                  <p className="text-xs text-[#6C7787] mb-4">
+                    알림을 허용한 모든 집행위원 폰에 푸시가 갑니다.
+                  </p>
+                  <input
+                    value={pushTitle}
+                    onChange={(e) => setPushTitle(e.target.value)}
+                    placeholder="제목"
+                    className="w-full mb-2 px-3 py-2 border rounded border-[#C6CEDA] bg-white text-sm focus:outline-[#BF3329]"
+                  />
+                  <textarea
+                    value={pushBody}
+                    onChange={(e) => setPushBody(e.target.value)}
+                    placeholder="내용"
+                    rows={3}
+                    className="w-full mb-2 px-3 py-2 border rounded border-[#C6CEDA] bg-white text-sm focus:outline-[#BF3329]"
+                  />
+                  <button
+                    onClick={handleSendPush}
+                    className="px-4 py-2 bg-[#111823] text-white font-semibold rounded text-sm hover:bg-[#3B4653] transition"
+                  >
+                    전체 발송
+                  </button>
+                  {sendResult && (
+                    <p className="text-xs text-[#6C7787] mt-3">{sendResult}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </main>
