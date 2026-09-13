@@ -14,6 +14,7 @@ import {
   doc,
 } from "firebase/firestore";
 import { useConfirm } from "./ConfirmDialog";
+import { buildLibraryPayload } from "@/lib/library";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ================= Types =================
@@ -333,14 +334,9 @@ function UploadModal({
       // Firestore 저장 (자료별 단건 문서)
       const docId: string = editingItem ? editingItem.id : `lib_${nowMs()}`;
 
-      await setDoc(doc(db, "library", docId), {
-        title: data.title,
-        url: data.url || undefined,
-        owner: data.owner,
-        date: data.date,
-        note: data.note || undefined,
-        files: uploadedCloudFiles,
-      }, { merge: true });
+      const payload = buildLibraryPayload(data, uploadedCloudFiles);
+
+      await setDoc(doc(db, "library", docId), payload, { merge: true });
       onClose();
     } catch (error) {
       console.error("업로드 실패:", error);
