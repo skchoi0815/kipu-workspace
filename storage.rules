@@ -1,0 +1,29 @@
+# KIPU Workspace Storage 보안 규칙 (정본)
+# 적용: firebase console > Storage > 규칙에 붙여넣기, 또는
+#   firebase deploy --only storage  (firebase.json 설정 후)
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isActive() {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    // 자료실 파일: 읽기는 로그인, 쓰기·삭제는 active 집행위원.
+    match /library/{allPaths=**} {
+      allow read: if signedIn();
+      allow write, delete: if isActive();
+    }
+
+    // 그 외 경로: 기본 차단.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

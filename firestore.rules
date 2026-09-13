@@ -1,0 +1,92 @@
+# KIPU Workspace Firestore 보안 규칙 (정본)
+# 적용: firebase console > Firestore > 규칙에 붙여넣기, 또는
+#   firebase deploy --only firestore:rules  (firebase.json 설정 후)
+# docs/WORKFLOW.md의 콘솔 수기 규칙을 이 파일로 대체한다.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActive() {
+      return signedIn() && myUser().status == 'active';
+    }
+
+    function isOwner() {
+      return isActive() && myUser().perm == 'owner';
+    }
+
+    // users: 본인 문서는 읽기 가능, 쓰기는 최초 생성(본인)과 owner에게 허용.
+    // heal 교정은 본인 문서에 대한 쓰기로 수행되므로 허용하되,
+    // perm/status 변경은 owner만 가능하게 제한한다.
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if isOwner()
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.perm == resource.data.perm
+          && request.resource.data.status == resource.data.status);
+      allow delete: if isOwner();
+    }
+
+    // 공지·채팅: 읽기는 로그인, 쓰기는 active 집행위원.
+    // 공지 삭제는 작성자 본인 또는 owner가 수행한다(클라이언트에서 작성자 확인).
+    match /notices/{noticeId} {
+      allow read: if signedIn();
+      allow create: if isActive();
+      allow update: if isActive()
+        && (resource.data.authorId == request.auth.uid || isOwner());
+      allow delete: if isActive()
+        && (resource.data.authorId == request.auth.uid || isOwner());
+    }
+
+    match /chat/{msgId} {
+      allow read: if signedIn();
+      allow create: if isActive();
+      allow update, delete: if isOwner();
+    }
+
+    // 일정·명부·자료·행사: 읽기는 로그인, 쓰기는 active 집행위원.
+    match /schedules/{docId} {
+      allow read: if signedIn();
+      allow write: if isActive();
+    }
+
+    match /members/{docId} {
+      allow read: if signedIn();
+      allow write: if isActive();
+    }
+
+    match /library/{docId} {
+      allow read: if signedIn();
+      allow write: if isActive();
+    }
+
+    match /events/{eventId} {
+      allow read: if signedIn();
+      allow write: if isActive();
+    }
+
+    // 레거시 단일문서(data/m_*): 이관 완료 후 삭제 예정. 쓰기 차단, 읽기만 유지.
+    match /data/{docId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // FCM 토큰: 쓰기는 로그인 사용자(본인 토큰 저장), 읽음·목록·삭제는 owner.
+    match /fcmTokens/{tokenId} {
+      allow get, list: if isOwner();
+      allow create, update: if signedIn();
+      allow delete: if isOwner()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+  }
+}
