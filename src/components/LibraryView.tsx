@@ -4,7 +4,16 @@ import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import imageCompression from "browser-image-compression";
 import { db, storage } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  setDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { useConfirm } from "./ConfirmDialog";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ================= Types =================
@@ -34,27 +43,42 @@ interface FormData {
   note: string;
 }
 
+// 렌더 순수성 규칙 준수를 위해 현재시각 조회는 컴포넌트 밖 헬퍼로 분리
+function nowMs(): number {
+  return Date.now();
+}
+
 // ================= Main Component =================
 export default function LibraryView({ currentRole }: { currentRole: string }) {
+  const confirmDialog = useConfirm();
   const [items, setItems] = useState<LibItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [editingItem, setEditingItem] = useState<LibItem | null>(null);
   const [viewingItem, setViewingItem] = useState<LibItem | null>(null);
 
-  // Firestore 데이터 실시간 구독
+  // Firestore library 컬렉션 실시간 구독 (자료별 단건 문서)
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, "data", "m_doc"), (snap) => {
-      if (snap.exists()) {
-        setItems(snap.data().items || []);
+    const q = query(collection(db, "library"), orderBy("date", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const list: LibItem[] = [];
+        snapshot.forEach((d) => {
+          list.push({ ...(d.data() as Omit<LibItem, "id">), id: d.id });
+        });
+        setItems(list);
+      },
+      (error) => {
+        console.warn("library 동기화 대기 중:", error.message);
       }
-    });
+    );
     return () => unsub();
   }, []);
 
   // 자료 삭제 (Storage 파일 포함)
   const handleDelete = async (item: LibItem) => {
-    if (!confirm(`'${item.title}' 자료를 삭제하시겠습니까? 첨부된 파일도 모두 서버에서 영구 삭제됩니다.`)) return;
+    if (!(await confirmDialog(`'${item.title}' 자료를 삭제하시겠습니까? 첨부된 파일도 모두 서버에서 영구 삭제됩니다.`))) return;
 
     try {
       // 1. Cloud Storage에서 실제 파일 삭제
@@ -67,9 +91,8 @@ export default function LibraryView({ currentRole }: { currentRole: string }) {
         }
       }
 
-      // 2. Firestore 메타데이터 삭제
-      const updated = items.filter((it) => it.id !== item.id);
-      await setDoc(doc(db, "data", "m_doc"), { items: updated }, { merge: true });
+      // 2. Firestore 단건 문서 삭제
+      await deleteDoc(doc(db, "library", item.id));
       if (viewingItem?.id === item.id) setViewingItem(null);
     } catch (err) {
       console.error("삭제 중 오류:", err);
@@ -122,11 +145,10 @@ export default function LibraryView({ currentRole }: { currentRole: string }) {
       {/* 모달 */}
       {viewingItem && <DetailViewer item={viewingItem} onClose={() => setViewingItem(null)} />}
       {showUploadModal && (
-        <UploadModal 
-          currentRole={currentRole} 
-          existingItems={items}
-          editingItem={editingItem} 
-          onClose={() => setShowUploadModal(false)} 
+        <UploadModal
+          currentRole={currentRole}
+          editingItem={editingItem}
+          onClose={() => setShowUploadModal(false)}
         />
       )}
     </div>
@@ -134,7 +156,17 @@ export default function LibraryView({ currentRole }: { currentRole: string }) {
 }
 
 // ================= Sub Component: Library Table =================
-function LibraryTable({ items, onView, onEdit, onDelete }: any) {
+function LibraryTable({
+  items,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  items: LibItem[];
+  onView: (item: LibItem) => void;
+  onEdit: (item: LibItem) => void;
+  onDelete: (item: LibItem) => void;
+}) {
   const formatSize = (bytes: number) => {
     if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + "MB";
     if (bytes >= 1024) return Math.round(bytes / 1024) + "KB";
@@ -203,7 +235,15 @@ function LibraryTable({ items, onView, onEdit, onDelete }: any) {
 }
 
 // ================= Sub Component: Upload Form Modal =================
-function UploadModal({ currentRole, existingItems, editingItem, onClose }: any) {
+function UploadModal({
+  currentRole,
+  editingItem,
+  onClose,
+}: {
+  currentRole: string;
+  editingItem: LibItem | null;
+  onClose: () => void;
+}) {
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: {
       title: editingItem?.title || "",
@@ -262,7 +302,7 @@ function UploadModal({ currentRole, existingItems, editingItem, onClose }: any) 
       
       let completedFiles = 0;
       for (const file of filesToUpload) {
-        const uniquePath = `library/${Date.now()}_${file.name}`;
+        const uniquePath = `library/${nowMs()}_${file.name}`;
         const storageRef = ref(storage, uniquePath);
         const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -277,7 +317,7 @@ function UploadModal({ currentRole, existingItems, editingItem, onClose }: any) 
             async () => {
               const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
               uploadedCloudFiles.push({
-                id: `f_${Date.now()}_${Math.random().toString(36).substring(2)}`,
+                id: `f_${nowMs()}_${Math.random().toString(36).substring(2)}`,
                 name: file.name,
                 size: file.size,
                 url: downloadUrl,
@@ -290,22 +330,17 @@ function UploadModal({ currentRole, existingItems, editingItem, onClose }: any) 
         });
       }
 
-      // Firestore 저장
-      const finalItem: LibItem = {
-        id: editingItem ? editingItem.id : `lib_${Date.now()}`,
+      // Firestore 저장 (자료별 단건 문서)
+      const docId: string = editingItem ? editingItem.id : `lib_${nowMs()}`;
+
+      await setDoc(doc(db, "library", docId), {
         title: data.title,
         url: data.url || undefined,
         owner: data.owner,
         date: data.date,
         note: data.note || undefined,
         files: uploadedCloudFiles,
-      };
-
-      const updatedItems = editingItem 
-        ? existingItems.map((it: LibItem) => it.id === editingItem.id ? finalItem : it)
-        : [finalItem, ...existingItems];
-
-      await setDoc(doc(db, "data", "m_doc"), { items: updatedItems }, { merge: true });
+      }, { merge: true });
       onClose();
     } catch (error) {
       console.error("업로드 실패:", error);

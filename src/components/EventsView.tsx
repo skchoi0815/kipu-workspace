@@ -2,7 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { useConfirm } from "./ConfirmDialog";
 
 export interface EventQuestion {
   id: string;
@@ -38,46 +48,49 @@ export interface EventItem {
 }
 
 export default function EventsView({ currentRole }: { currentRole: string }) {
+  const confirmDialog = useConfirm();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
 
-  // Firestore m_events 문서 실시간 동기화 (에러 완벽 격리)
+  // Firestore events 컬렉션 실시간 동기화 (행사별 단건 문서)
   useEffect(() => {
     let unsub = () => {};
     try {
       unsub = onSnapshot(
-        doc(db, "data", "m_events"),
-        (snap) => {
-          if (snap.exists()) {
-            const list: EventItem[] = snap.data()?.items || [];
-            setEvents(list);
-            if (list.length > 0 && !selectedEventId) {
-              setSelectedEventId(list[0].id);
-            }
+        query(collection(db, "events"), orderBy("date", "desc")),
+        (snapshot) => {
+          const list: EventItem[] = [];
+          snapshot.forEach((d) => {
+            list.push({ ...(d.data() as Omit<EventItem, "id">), id: d.id });
+          });
+          setEvents(list);
+          if (list.length > 0 && !selectedEventId) {
+            setSelectedEventId(list[0].id);
           }
         },
         (error) => {
           // Turbopack 오버레이 방지를 위해 일반 로깅 처리
-          console.log("Firestore m_events 동기화 대기:", error.code);
+          console.log("Firestore events 동기화 대기:", error.code);
         }
       );
-    } catch (err: any) {
-      console.log("리스너 초기화 예외 처리:", err.message);
+    } catch (err: unknown) {
+      console.log("리스너 초기화 예외 처리:", err instanceof Error ? err.message : err);
     }
     return () => unsub();
-  }, [selectedEventId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const saveEvents = async (newEvents: EventItem[]) => {
-    setEvents(newEvents);
+  const saveEventDoc = async (item: EventItem) => {
     try {
-      await setDoc(doc(db, "data", "m_events"), { items: newEvents }, { merge: true });
-      console.log("행사 저장 성공!");
-    } catch (e: any) {
-      console.warn("행사 저장 오류 (권한 또는 연결 점검):", e.code || e.message);
-      alert("데이터 저장 중 오류가 발생했습니다: " + (e.message || e.code));
+      const { id, ...fields } = item;
+      await setDoc(doc(db, "events", id), fields, { merge: true });
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      console.warn("행사 저장 오류 (권한 또는 연결 점검):", err.code || err.message);
+      alert("데이터 저장 중 오류가 발생했습니다: " + (err.message || err.code));
     }
   };
 
@@ -108,29 +121,38 @@ export default function EventsView({ currentRole }: { currentRole: string }) {
     setShowEditModal(true);
   };
 
-  const handleDeleteEvent = (id: string) => {
-    if (!confirm("이 행사를 삭제하시겠습니까?")) return;
-    const filtered = events.filter((e) => e.id !== id);
-    saveEvents(filtered);
+  const handleDeleteEvent = async (id: string) => {
+    if (!(await confirmDialog("이 행사를 삭제하시겠습니까?"))) return;
+    try {
+      await deleteDoc(doc(db, "events", id));
+    } catch (err) {
+      console.error("행사 삭제 실패:", err);
+      return;
+    }
     if (selectedEventId === id) {
-      setSelectedEventId(filtered[0]?.id || null);
+      const remaining = events.filter((e) => e.id !== id);
+      setSelectedEventId(remaining[0]?.id || null);
     }
   };
 
-  const handleToggleStatus = (ev: EventItem) => {
-    const updated = events.map((e) => (e.id === ev.id ? { ...e, isOpen: !e.isOpen } : e));
-    saveEvents(updated);
+  const handleToggleStatus = async (ev: EventItem) => {
+    try {
+      await updateDoc(doc(db, "events", ev.id), { isOpen: !ev.isOpen });
+    } catch (err) {
+      console.error("행사 상태 변경 실패:", err);
+    }
   };
 
-  const handleUpdateAttendeeStatus = (attendeeId: string, newStatus: Attendee["status"]) => {
+  const handleUpdateAttendeeStatus = async (attendeeId: string, newStatus: Attendee["status"]) => {
     if (!currentEvent) return;
     const updatedAttendees = (currentEvent.attendees || []).map((a) =>
       a.id === attendeeId ? { ...a, status: newStatus } : a
     );
-    const updatedEvents = events.map((e) =>
-      e.id === currentEvent.id ? { ...e, attendees: updatedAttendees } : e
-    );
-    saveEvents(updatedEvents);
+    try {
+      await updateDoc(doc(db, "events", currentEvent.id), { attendees: updatedAttendees });
+    } catch (err) {
+      console.error("참석 상태 변경 실패:", err);
+    }
   };
 
   return (
@@ -359,11 +381,7 @@ export default function EventsView({ currentRole }: { currentRole: string }) {
           eventData={editingEvent}
           onClose={() => setShowEditModal(false)}
           onSave={(saved) => {
-            const idx = events.findIndex((e) => e.id === saved.id);
-            const updated = idx >= 0
-              ? events.map((e) => (e.id === saved.id ? saved : e))
-              : [saved, ...events];
-            saveEvents(updated);
+            saveEventDoc(saved);
             setSelectedEventId(saved.id);
             setShowEditModal(false);
           }}
@@ -376,10 +394,8 @@ export default function EventsView({ currentRole }: { currentRole: string }) {
           onClose={() => setShowPreviewModal(false)}
           onSubmitSuccess={(newAttendee) => {
             const updatedAttendees = [newAttendee, ...(currentEvent.attendees || [])];
-            const updatedEvents = events.map((e) =>
-              e.id === currentEvent.id ? { ...e, attendees: updatedAttendees } : e
-            );
-            saveEvents(updatedEvents);
+            updateDoc(doc(db, "events", currentEvent.id), { attendees: updatedAttendees })
+              .catch((err) => console.error("신청 접수 실패:", err));
             alert("신청서가 성공적으로 접수되었습니다!");
             setShowPreviewModal(false);
           }}

@@ -54,24 +54,24 @@ export default function ChatBox({ currentUserName, currentUserId }: { currentUse
   };
 
   return (
-    <div className="flex flex-col h-[580px] border border-[var(--border)] rounded-lg bg-[var(--surface)] overflow-hidden">
-      <div className="p-3 bg-[var(--surface-2)] border-b border-[var(--border)] text-xs text-[var(--muted)]">
+    <div className="flex flex-col h-[580px] border border-[#DFE4EC] rounded-lg bg-white overflow-hidden">
+      <div className="p-3 bg-[#EDF0F6] border-b border-[#DFE4EC] text-xs text-[#6C7787]">
         집행부 실시간 소통 공간입니다.
       </div>
-      
+
       {/* 메시지 로그 */}
       <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
         {messages.map((m) => {
           const isMine = m.uid === currentUserId;
           return (
             <div key={m.id} className={`flex flex-col max-w-[70%] ${isMine ? "self-end items-end" : "self-start items-start"}`}>
-              {!isMine && <span className="text-[11px] text-[var(--muted)] mb-0.5">{m.who}</span>}
+              {!isMine && <span className="text-[11px] text-[#6C7787] mb-0.5">{m.who}</span>}
               <div className={`px-3 py-2 rounded-xl text-sm break-words ${
-                isMine ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] border border-[var(--border)]"
+                isMine ? "bg-[#BF3329] text-white" : "bg-[#EDF0F6] border border-[#DFE4EC] text-[#111823]"
               }`}>
                 {m.text}
               </div>
-              <span className="text-[10px] text-[var(--faint)] mt-0.5">{m.when}</span>
+              <span className="text-[10px] text-[#98A2B0] mt-0.5">{m.when}</span>
             </div>
           );
         })}
@@ -79,15 +79,15 @@ export default function ChatBox({ currentUserName, currentUserId }: { currentUse
       </div>
 
       {/* 입력창 */}
-      <form onSubmit={handleSend} className="p-2 border-t border-[var(--border)] flex gap-2">
+      <form onSubmit={handleSend} className="p-2 border-t border-[#DFE4EC] flex gap-2">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="메시지를 입력하세요"
-          className="flex-1 px-3 py-2 border rounded border-[var(--border)] text-sm focus:outline-[var(--accent)]"
+          className="flex-1 px-3 py-2 border rounded border-[#C6CEDA] text-sm focus:outline-[#BF3329]"
         />
-        <button type="submit" className="px-4 py-2 bg-[var(--accent)] text-white rounded text-sm font-semibold">
+        <button type="submit" className="px-4 py-2 bg-[#BF3329] text-white rounded text-sm font-semibold hover:bg-[#96271F] transition">
           전송
         </button>
       </form>

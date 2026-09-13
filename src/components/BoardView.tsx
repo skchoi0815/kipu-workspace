@@ -1,137 +1,178 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { useConfirm } from "./ConfirmDialog";
 
-export interface ChatMessage {
+export interface NoticeItem {
   id: string;
-  senderId: string;
-  senderName: string;
-  text: string;
+  title: string;
+  body: string;
+  authorId: string;
+  authorName: string;
+  ts: number;
   createdAt: string;
 }
 
-export default function ChatBox({
+export default function BoardView({
   currentUserName,
   currentUserId,
 }: {
   currentUserName: string;
   currentUserId: string;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputText, setInputText] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
+  const [notices, setNotices] = useState<NoticeItem[]>([]);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const confirmDialog = useConfirm();
 
-  // Firestore m_chat 문서 실시간 동기화 (에러 핸들러 포함)
   useEffect(() => {
+    const q = query(collection(db, "notices"), orderBy("ts", "desc"));
     const unsub = onSnapshot(
-      doc(db, "data", "m_chat"),
-      (snap) => {
-        if (snap.exists()) {
-          setMessages(snap.data().items || []);
-        }
+      q,
+      (snapshot) => {
+        const list: NoticeItem[] = [];
+        snapshot.forEach((d) => {
+          list.push({ ...(d.data() as Omit<NoticeItem, "id">), id: d.id });
+        });
+        setNotices(list);
       },
       (error) => {
-        console.warn("m_chat 동기화 대기 중:", error.message);
+        console.warn("notices 동기화 대기 중:", error.message);
       }
     );
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const handleSend = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
-
-    const newMsg: ChatMessage = {
-      id: "msg_" + Date.now(),
-      senderId: currentUserId,
-      senderName: currentUserName,
-      text: inputText.trim(),
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated = [...messages, newMsg];
-    setMessages(updated);
-    setInputText("");
-
+    if (!title.trim() || !body.trim() || saving) return;
+    setSaving(true);
     try {
-      await setDoc(doc(db, "data", "m_chat"), { items: updated }, { merge: true });
-    } catch (e) {
-      console.error("메시지 전송 실패:", e);
+      await addDoc(collection(db, "notices"), {
+        title: title.trim(),
+        body: body.trim(),
+        authorId: currentUserId,
+        authorName: currentUserName,
+        ts: Date.now(),
+        createdAt: new Date().toISOString(),
+      });
+      setTitle("");
+      setBody("");
+    } catch (err) {
+      console.error("공지 등록 실패:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (notice: NoticeItem) => {
+    if (notice.authorId !== currentUserId) return;
+    if (!(await confirmDialog(`'${notice.title}' 공지를 삭제하시겠습니까?`))) return;
+    try {
+      await deleteDoc(doc(db, "notices", notice.id));
+      if (expandedId === notice.id) setExpandedId(null);
+    } catch (err) {
+      console.error("공지 삭제 실패:", err);
     }
   };
 
   return (
-    <div className="bg-white border border-[#DFE4EC] rounded-xl h-[650px] flex flex-col shadow-sm">
-      <div className="p-4 border-b border-[#DFE4EC] flex items-center justify-between">
-        <div>
-          <h3 className="font-bold text-sm text-[#111823]">집행부 실시간 소통</h3>
-          <p className="text-[11px] text-[#6C7787]">실시간으로 의견을 공유하는 업무 채팅방입니다.</p>
-        </div>
-        <span className="text-xs text-[#6C7787] bg-[#F4F6FA] px-2.5 py-1 rounded-full">
-          전체 {messages.length}개 메시지
-        </span>
-      </div>
-
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-        {messages.length === 0 ? (
-          <div className="m-auto text-xs text-[#6C7787]">
-            주고받은 대화가 없습니다. 첫 메시지를 남겨보세요.
-          </div>
-        ) : (
-          messages.map((m) => {
-            const isMe = m.senderId === currentUserId;
-            const timeStr = m.createdAt
-              ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : "";
-
-            return (
-              <div
-                key={m.id}
-                className={`flex flex-col max-w-[75%] ${isMe ? "self-end items-end" : "self-start items-start"}`}
-              >
-                {!isMe && (
-                  <span className="text-[11px] font-semibold text-[#6C7787] mb-1">
-                    {m.senderName}
-                  </span>
-                )}
-                <div
-                  className={`px-3.5 py-2 rounded-2xl text-xs leading-relaxed break-words ${
-                    isMe
-                      ? "bg-[#BF3329] text-white rounded-br-none"
-                      : "bg-[#EDF0F6] text-[#111823] rounded-bl-none"
-                  }`}
-                >
-                  {m.text}
-                </div>
-                <span className="text-[10px] text-[#98A2B0] mt-1 font-mono">{timeStr}</span>
-              </div>
-            );
-          })
-        )}
-        <div ref={endRef} />
-      </div>
-
-      <form onSubmit={handleSend} className="p-3 border-t border-[#DFE4EC] flex gap-2">
+    <div className="flex flex-col gap-4">
+      <form
+        onSubmit={handleCreate}
+        className="bg-white border border-[#DFE4EC] rounded-xl p-4 shadow-sm flex flex-col gap-2"
+      >
+        <p className="text-sm font-bold text-[#111823]">공지 작성</p>
         <input
-          type="text"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          placeholder="메시지를 입력하세요…"
-          className="flex-1 px-3.5 py-2 border rounded-lg border-[#C6CEDA] text-xs focus:outline-[#BF3329]"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="제목"
+          maxLength={120}
+          className="w-full px-3 py-2 border rounded-lg border-[#C6CEDA] bg-white text-sm focus:outline-[#BF3329]"
         />
-        <button
-          type="submit"
-          className="px-5 py-2 bg-[#BF3329] text-white font-bold rounded-lg text-xs hover:bg-[#96271F] transition"
-        >
-          전송
-        </button>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="내용"
+          rows={3}
+          maxLength={5000}
+          className="w-full px-3 py-2 border rounded-lg border-[#C6CEDA] bg-white text-sm focus:outline-[#BF3329]"
+        />
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving || !title.trim() || !body.trim()}
+            className="px-4 py-2 bg-[#BF3329] text-white font-bold rounded-lg text-xs hover:bg-[#96271F] transition disabled:opacity-40"
+          >
+            {saving ? "등록 중…" : "공지 등록"}
+          </button>
+        </div>
       </form>
+
+      <div className="bg-white border border-[#DFE4EC] rounded-xl overflow-hidden shadow-sm">
+        {notices.length === 0 ? (
+          <p className="p-6 text-xs text-[#6C7787] text-center">
+            등록된 공지가 없습니다. 첫 공지를 작성해 보세요.
+          </p>
+        ) : (
+          <ul className="divide-y divide-[#DFE4EC]">
+            {notices.map((n) => {
+              const expanded = expandedId === n.id;
+              const dateStr = n.createdAt
+                ? new Date(n.createdAt).toLocaleDateString("ko-KR", {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })
+                : "";
+              return (
+                <li key={n.id} className="p-4">
+                  <button
+                    onClick={() => setExpandedId(expanded ? null : n.id)}
+                    className="w-full text-left flex items-center justify-between gap-3"
+                  >
+                    <span className="text-sm font-bold text-[#111823] truncate">
+                      {n.title}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-[#6C7787]">
+                      {n.authorName} · {dateStr}
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="mt-2">
+                      <p className="text-xs text-[#3B4653] whitespace-pre-wrap leading-relaxed">
+                        {n.body}
+                      </p>
+                      {n.authorId === currentUserId && (
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            onClick={() => handleDelete(n)}
+                            className="px-3 py-1 border border-[#C6CEDA] text-[#3B4653] rounded text-xs hover:bg-[#F4F6FA] transition"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "rm -rf .test-out && npx tsc src/lib/profiles.ts src/lib/profiles.test.ts --outDir .test-out --module commonjs --target es2022 --skipLibCheck --esModuleInterop && node --test .test-out/profiles.test.js; s=$?; rm -rf .test-out; exit $s",
     "predev": "node scripts/gen-fcm-sw.mjs",
     "prebuild": "node scripts/gen-fcm-sw.mjs"
   },

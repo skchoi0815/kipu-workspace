@@ -7,8 +7,21 @@ import {
   onMessage,
   type MessagePayload,
 } from "firebase/messaging";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, serverTimestamp, setDoc, deleteDoc } from "firebase/firestore";
 import { app, auth, db } from "@/lib/firebase";
+
+const TOKEN_STORAGE_KEY = "kipu-fcm-token";
+
+// User-Agent 원문 대신 저장하는 짧은 단말 구분값 (개인정보 최소화)
+function platformLabel(): string {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) return "iOS";
+  if (/Android/.test(ua)) return "Android";
+  if (/Windows/.test(ua)) return "Windows";
+  if (/Macintosh/.test(ua)) return "macOS";
+  if (/Linux/.test(ua)) return "Linux";
+  return "기타";
+}
 
 export type FcmStatus =
   | "idle"
@@ -45,9 +58,14 @@ export async function requestFcmPermission(
     await setDoc(doc(db, "fcmTokens", token), {
       token,
       uid: auth.currentUser?.uid || null,
-      platform: navigator.userAgent,
+      platform: platformLabel(),
       updatedAt: serverTimestamp(),
     });
+    try {
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    } catch {
+      // 저장소 미지원 환경에서는 무시 (토큰 문서는 이미 저장됨)
+    }
 
     onMessage(messaging, (payload: MessagePayload) => {
       onForeground?.({
@@ -60,5 +78,27 @@ export async function requestFcmPermission(
   } catch (e) {
     console.error("[fcm] 토큰 발급 실패", e);
     return { status: "error", token: null };
+  }
+}
+
+// 로그아웃 시 이 기기의 토큰 문서를 정리한다.
+// 실패해도 로그아웃 자체는 막지 않는다.
+export async function unregisterFcmToken(): Promise<void> {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return;
+  }
+  if (!token) return;
+  try {
+    await deleteDoc(doc(db, "fcmTokens", token));
+  } catch (e) {
+    console.warn("[fcm] 토큰 정리 실패", e);
+  }
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // 무시
   }
 }

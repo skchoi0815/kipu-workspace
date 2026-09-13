@@ -13,9 +13,15 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+const missingEnv = Object.entries(firebaseConfig)
+  .filter(([, v]) => !v)
+  .map(([k]) => k);
+if (missingEnv.length > 0) {
+  console.warn(`[firebase] 환경변수 누락: ${missingEnv.join(", ")}`);
+}
+
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-console.log("🔥 현재 연결된 Project ID:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app); // 외부에서 사용할 수 있도록 export

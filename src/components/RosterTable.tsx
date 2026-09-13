@@ -2,7 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  setDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { useConfirm } from "./ConfirmDialog";
 
 export interface MemberItem {
   id: string;
@@ -17,58 +27,62 @@ export interface MemberItem {
 }
 
 export default function RosterTable({ canEdit }: { canEdit: boolean }) {
+  const confirmDialog = useConfirm();
   const [members, setMembers] = useState<MemberItem[]>([]);
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingMember, setEditingMember] = useState<MemberItem | null>(null);
 
-  // Firestore m_roster 문서 실시간 동기화 (에러 핸들러 포함)
+  // Firestore members 컬렉션 실시간 동기화 (조합원별 단건 문서)
   useEffect(() => {
+    const q = query(collection(db, "members"), orderBy("name", "asc"));
     const unsub = onSnapshot(
-      doc(db, "data", "m_roster"),
-      (snap) => {
-        if (snap.exists()) {
-          setMembers(snap.data().items || []);
-        }
+      q,
+      (snapshot) => {
+        const list: MemberItem[] = [];
+        snapshot.forEach((d) => {
+          list.push({ ...(d.data() as Omit<MemberItem, "id">), id: d.id });
+        });
+        setMembers(list);
       },
       (error) => {
-        console.warn("m_roster 동기화 대기 중:", error.message);
+        console.warn("members 동기화 대기 중:", error.message);
       }
     );
     return () => unsub();
   }, []);
 
-  const saveMembers = async (newMembers: MemberItem[]) => {
-    setMembers(newMembers);
-    try {
-      await setDoc(doc(db, "data", "m_roster"), { items: newMembers }, { merge: true });
-    } catch (e) {
-      console.error("조합원 명부 저장 실패:", e);
-    }
-  };
-
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingMember || !editingMember.name.trim()) return;
 
-    const idx = members.findIndex((m) => m.id === editingMember.id);
-    const updated = idx >= 0
-      ? members.map((m) => (m.id === editingMember.id ? editingMember : m))
-      : [editingMember, ...members];
-
-    saveMembers(updated);
+    const { id, ...fields } = editingMember;
+    try {
+      if (id) {
+        await setDoc(doc(db, "members", id), fields, { merge: true });
+      } else {
+        await addDoc(collection(db, "members"), fields);
+      }
+    } catch (err) {
+      console.error("조합원 명부 저장 실패:", err);
+      return;
+    }
     setShowModal(false);
     setEditingMember(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (!confirm("이 조합원을 명부에서 삭제하시겠습니까?")) return;
-    saveMembers(members.filter((m) => m.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!(await confirmDialog("이 조합원을 명부에서 삭제하시겠습니까?"))) return;
+    try {
+      await deleteDoc(doc(db, "members", id));
+    } catch (err) {
+      console.error("조합원 삭제 실패:", err);
+    }
   };
 
   const handleOpenAdd = () => {
     setEditingMember({
-      id: "mem_" + Date.now(),
+      id: "",
       name: "",
       college: "인문대",
       dept: "",

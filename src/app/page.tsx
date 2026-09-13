@@ -16,7 +16,17 @@ import LibraryView from "@/components/LibraryView";
 import EventsView from "@/components/EventsView";
 import RosterTable from "@/components/RosterTable";
 import ChatBox from "@/components/ChatBox";
-import { requestFcmPermission, type FcmStatus, type ForegroundPush } from "@/hooks/useFcm";
+import HomeDashboard from "@/components/HomeDashboard";
+import { ConfirmProvider } from "@/components/ConfirmDialog";
+import { requestFcmPermission, unregisterFcmToken, type FcmStatus, type ForegroundPush } from "@/hooks/useFcm";
+
+const TAB_IDS = ["home", "cal", "board", "lib", "events", "chat", "roster", "admin"];
+
+function initialTab(): string {
+  if (typeof window === "undefined") return "home";
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return t && TAB_IDS.includes(t) ? t : "home";
+}
 
 interface UserProfile {
   id: string;
@@ -34,7 +44,12 @@ export default function WorkspacePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
-  const [activeTab, setActiveTab] = useState<string>("home");
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
+
+  const changeTab = (id: string) => {
+    setActiveTab(id);
+    window.history.replaceState(null, "", id === "home" ? "/" : `/?tab=${id}`);
+  };
   const [profileError, setProfileError] = useState("");
   const [fcmStatus, setFcmStatus] = useState<FcmStatus>("idle");
   const [fcmMsg, setFcmMsg] = useState<ForegroundPush | null>(null);
@@ -65,7 +80,10 @@ export default function WorkspacePage() {
       });
       const data = await res.json();
       if (data.ok) {
-        setSendResult(`${data.sent}대에 발송했습니다.`);
+        setSendResult(
+          `${data.sent}대에 발송했습니다.` +
+            (data.cleaned > 0 ? ` (만료 토큰 ${data.cleaned}건 정리)` : "")
+        );
         setPushTitle("");
         setPushBody("");
       } else {
@@ -122,14 +140,16 @@ export default function WorkspacePage() {
     setLoginError("");
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       setLoginError("이메일 또는 비밀번호가 올바르지 않습니다.");
     }
   };
 
   const handleLogout = () => {
-    signOut(auth);
+    unregisterFcmToken().finally(() => {
+      signOut(auth);
+    });
   };
 
   if (loading) {
@@ -258,6 +278,7 @@ export default function WorkspacePage() {
     currentUser.role === "조직국장";
 
   return (
+    <ConfirmProvider>
     <div className="min-h-screen flex flex-col bg-[#F4F6FA]">
       {/* 최상단 상태 밴드 */}
       <div className="sticky top-0 z-50 flex items-center justify-between px-4 py-2 bg-[#111823] text-white text-xs">
@@ -300,7 +321,7 @@ export default function WorkspacePage() {
             ].map((menu) => (
               <button
                 key={menu.id}
-                onClick={() => setActiveTab(menu.id)}
+                onClick={() => changeTab(menu.id)}
                 className={`flex items-center gap-2 px-3 py-2 rounded text-left transition ${
                   activeTab === menu.id 
                     ? "bg-[#EDF0F6] font-bold text-[#111823]" 
@@ -327,12 +348,7 @@ export default function WorkspacePage() {
             </h2>
           </div>
 
-          {activeTab === "home" && (
-            <div className="bg-white border border-[#DFE4EC] rounded-lg p-6 shadow-sm">
-              <p className="text-sm font-semibold text-[#111823]">환영합니다, {currentUser.name}님!</p>
-              <p className="text-xs text-[#6C7787] mt-1">좌측 메뉴에서 공지사항, 자료실, 행사, 일정 등을 관리할 수 있습니다.</p>
-            </div>
-          )}
+          {activeTab === "home" && <HomeDashboard onGoTab={changeTab} />}
 
           {activeTab === "cal" && <CalendarView />}
           {activeTab === "board" && (
@@ -417,5 +433,6 @@ export default function WorkspacePage() {
         </main>
       </div>
     </div>
+    </ConfirmProvider>
   );
 }

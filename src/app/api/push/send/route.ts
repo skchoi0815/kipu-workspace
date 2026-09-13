@@ -82,15 +82,36 @@ export async function POST(req: Request) {
     if (tokens.length === 0) return Response.json({ ok: true, sent: 0 });
 
     let sent = 0;
+    let cleaned = 0;
+    const db = getFirestore(app);
     for (let i = 0; i < tokens.length; i += 500) {
+      const batch = tokens.slice(i, i + 500);
       const res = await getMessaging(app).sendEachForMulticast({
-        tokens: tokens.slice(i, i + 500),
+        tokens: batch,
         notification: { title, body },
         webpush: { fcmOptions: { link: "/" } },
       });
       sent += res.successCount;
+      // 등록 해제·만료 토큰은 DB에서 정리한다
+      for (let j = 0; j < batch.length; j++) {
+        const resp = res.responses[j];
+        const code = resp?.error?.code || "";
+        if (
+          !resp?.success &&
+          (code.includes("registration-token-not-registered") ||
+            code.includes("invalid-argument"))
+        ) {
+          const dead = batch[j];
+          try {
+            await db.collection("fcmTokens").doc(dead).delete();
+            cleaned++;
+          } catch {
+            // 정리 실패는 발송 결과에 영향 주지 않는다
+          }
+        }
+      }
     }
-    return Response.json({ ok: true, sent });
+    return Response.json({ ok: true, sent, cleaned });
   } catch (e) {
     const message = e instanceof Error ? e.message : "발송 실패";
     const status = message.includes("관리자") || message.includes("로그인") ? 403 : 500;

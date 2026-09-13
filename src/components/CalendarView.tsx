@@ -2,7 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { useConfirm } from "./ConfirmDialog";
 
 export interface CalEvent {
   id: string;
@@ -13,6 +22,7 @@ export interface CalEvent {
 }
 
 export default function CalendarView() {
+  const confirmDialog = useConfirm();
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showModal, setShowModal] = useState(false);
@@ -21,53 +31,53 @@ export default function CalendarView() {
   const [type, setType] = useState<CalEvent["type"]>("meeting");
   const [memo, setMemo] = useState("");
 
-  // Firestore m_cal 문서 실시간 동기화 (에러 핸들러 포함)
+  // Firestore schedules 컬렉션 실시간 동기화 (일정별 단건 문서)
   useEffect(() => {
+    const q = query(collection(db, "schedules"), orderBy("date", "asc"));
     const unsub = onSnapshot(
-      doc(db, "data", "m_cal"),
-      (snap) => {
-        if (snap.exists()) {
-          setEvents(snap.data().items || []);
-        }
+      q,
+      (snapshot) => {
+        const list: CalEvent[] = [];
+        snapshot.forEach((d) => {
+          list.push({ ...(d.data() as Omit<CalEvent, "id">), id: d.id });
+        });
+        setEvents(list);
       },
       (error) => {
-        console.warn("m_cal 동기화 대기 중:", error.message);
+        console.warn("schedules 동기화 대기 중:", error.message);
       }
     );
     return () => unsub();
   }, []);
 
-  const saveEvents = async (newEvents: CalEvent[]) => {
-    setEvents(newEvents);
-    try {
-      await setDoc(doc(db, "data", "m_cal"), { items: newEvents }, { merge: true });
-    } catch (e) {
-      console.error("일정 저장 실패:", e);
-    }
-  };
-
-  const handleAddEvent = (e: React.FormEvent) => {
+  const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !date) return;
 
-    const newEv: CalEvent = {
-      id: "cal_" + Date.now(),
-      title,
-      date,
-      type,
-      memo,
-    };
-
-    saveEvents([...events, newEv]);
+    try {
+      await addDoc(collection(db, "schedules"), {
+        title,
+        date,
+        type,
+        memo,
+      });
+    } catch (err) {
+      console.error("일정 저장 실패:", err);
+      return;
+    }
     setShowModal(false);
     setTitle("");
     setDate("");
     setMemo("");
   };
 
-  const handleDelete = (id: string) => {
-    if (!confirm("이 일정을 삭제하시겠습니까?")) return;
-    saveEvents(events.filter((ev) => ev.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!(await confirmDialog("이 일정을 삭제하시겠습니까?"))) return;
+    try {
+      await deleteDoc(doc(db, "schedules", id));
+    } catch (err) {
+      console.error("일정 삭제 실패:", err);
+    }
   };
 
   // 달력 계산 로직
