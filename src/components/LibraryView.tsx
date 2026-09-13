@@ -14,7 +14,7 @@ import {
   doc,
 } from "firebase/firestore";
 import { useConfirm } from "./ConfirmDialog";
-import { buildLibraryPayload } from "@/lib/library";
+import { buildLibraryPayload, MAX_FILE_SIZE_BYTES } from "@/lib/library";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ================= Types =================
@@ -269,8 +269,8 @@ function UploadModal({
 
     for (let i = 0; i < fileList.length; i++) {
       let file = fileList[i];
-      if (file.size > 25 * 1024 * 1024) {
-        alert(`'${file.name}' 파일은 25MB를 초과할 수 없습니다.`);
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        alert(`'${file.name}' 파일은 100MB를 초과할 수 없습니다.`);
         continue;
       }
       // 이미지 파일인 경우 백그라운드 압축 적용

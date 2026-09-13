@@ -3,7 +3,7 @@
 // 배경: url/note에 undefined를 넣어 Firestore가 쓰기를 거부하던 버그.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildLibraryPayload } from "./library.js";
+import { buildLibraryPayload, MAX_FILE_SIZE_BYTES } from "./library.js";
 
 const base = {
   title: "운영위 자료",
@@ -12,6 +12,12 @@ const base = {
   date: "2026-09-13",
   note: "",
 };
+
+describe("MAX_FILE_SIZE_BYTES", () => {
+  it("첨부파일 제한은 100MB이다", () => {
+    assert.equal(MAX_FILE_SIZE_BYTES, 100 * 1024 * 1024);
+  });
+});
 
 describe("buildLibraryPayload", () => {
   it("빈 문자열 url/note는 키 자체를 포함하지 않는다", () => {

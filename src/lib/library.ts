@@ -2,6 +2,9 @@
 // 자료실 Firestore 문서 payload를 만드는 순수 함수.
 // Firestore는 undefined 값을 거부하므로 url/note는 값이 있을 때만 포함한다.
 
+// 자료실 첨부파일 1개당 최대 크기 (100MB)
+export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
 export interface LibraryStoredFile {
   id: string;
   name: string;
